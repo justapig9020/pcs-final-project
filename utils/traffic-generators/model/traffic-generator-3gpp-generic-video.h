@@ -7,7 +7,7 @@
 #define TRAFFIC_GENERATOR_3GPP_GENERIC_VIDEO
 
 #include "traffic-generator.h"
-
+#include "ns3/flow-monitor-module.h"
 #include <ns3/random-variable-stream.h>
 
 namespace ns3
@@ -127,6 +127,24 @@ class TrafficGenerator3gppGenericVideo : public TrafficGenerator
     double m_decreaseDataRateQuicklyMultiplier{0.0}; //!< the multiplier when decreaseing the data
                                                      //!< rate quickly, e.g. 0.2 to decrease 5 times
     uint16_t m_port{0};                              //!< the port of the peer node
+};
+
+class LoopbackUpdater : public Application
+{
+    public: 
+        static TypeId GetTypeId();
+        LoopbackUpdater();
+        ~LoopbackUpdater() override;
+        void setWindowInSeconds(double windowInSeconds);
+        void setTrafficGenerator(Ptr<TrafficGenerator3gppGenericVideo> trafficGenerator);
+        void setFlowMonitor(Ptr<FlowMonitor> flowMonitor);
+    protected:
+        void DoInitialize() override;
+    private:
+        double windowInSeconds;
+        Ptr<TrafficGenerator3gppGenericVideo> trafficGenerator;
+        Ptr<FlowMonitor> flowMonitor;
+        void updateLoopback();
 };
 
 } // namespace ns3

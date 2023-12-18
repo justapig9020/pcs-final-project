@@ -303,6 +303,8 @@ TrafficGenerator3gppGenericVideo::DoInitialize()
     m_packetJitter->SetAttribute("Bound", DoubleValue(m_boundJitter));
     // chain up
     TrafficGenerator::DoInitialize();
+
+    NS_LOG_DEBUG("END\n");
 }
 
 void
@@ -313,7 +315,11 @@ TrafficGenerator3gppGenericVideo::ReceiveLoopbackInformation(double packetLoss,
                                                              Time packetDelayJitter)
 {
     NS_LOG_FUNCTION(this);
-
+    NS_LOG_INFO("Packet loss: " << packetLoss << " packet received: " << packetReceived
+                                << " window in seconds: " << windowInSeconds
+                                << " packet delay: " << packetDelay
+                                << " packet delay jitter: " << packetDelayJitter);
+    return;
     if (!m_stopEvent.IsRunning())
     {
         NS_LOG_WARN("The application stopped working ignore this function call...");
@@ -467,6 +473,70 @@ TrafficGenerator3gppGenericVideo::ReceiveLoopbackInformation(double packetLoss,
         NS_LOG_DEBUG("Old mean packet size:       "
                      << tempMeanPacketSize << " new mean packet size:       " << m_meanPacketSize);
     }
+}
+
+TypeId
+LoopbackUpdater::GetTypeId()
+{
+    static TypeId tid =
+        TypeId("ns3::LoopbackUpdater")
+            .SetParent<Application>()
+            .SetGroupName("Applications")
+            .AddConstructor<LoopbackUpdater>();
+    return tid;
+}
+
+void LoopbackUpdater::setWindowInSeconds(double windowInSeconds)
+{
+    NS_LOG_FUNCTION(this << windowInSeconds);
+    this->windowInSeconds = windowInSeconds;
+}
+
+void LoopbackUpdater::setTrafficGenerator(Ptr<TrafficGenerator3gppGenericVideo> trafficGenerator)
+{
+    NS_LOG_FUNCTION(this << trafficGenerator);
+    this->trafficGenerator = trafficGenerator;
+}
+
+void LoopbackUpdater::setFlowMonitor(Ptr<FlowMonitor> flowMonitor)
+{
+    NS_LOG_FUNCTION(this << flowMonitor);
+    this->flowMonitor = flowMonitor;
+    NS_LOG_DEBUG("Flow monitor set " << this->flowMonitor);
+}
+
+LoopbackUpdater::LoopbackUpdater() : Application()
+{
+    NS_LOG_FUNCTION(this);
+    NS_LOG_DEBUG("Constructor LoopbackUpdater");
+    windowInSeconds = 0.0;
+    trafficGenerator = nullptr; 
+    flowMonitor = nullptr;
+    NS_LOG_DEBUG("Constructor LoopbackUpdater complete");
+}
+
+LoopbackUpdater::~LoopbackUpdater()
+{
+    NS_LOG_FUNCTION(this);
+}
+
+void LoopbackUpdater::DoInitialize()
+{
+    NS_LOG_FUNCTION(this);
+    Simulator::Schedule(Seconds(this->windowInSeconds), &LoopbackUpdater::updateLoopback, this);
+}
+
+void LoopbackUpdater::updateLoopback()
+{
+    NS_LOG_FUNCTION(this);
+    if (flowMonitor) {
+        flowMonitor->CheckForLostPackets();
+        FlowMonitor::FlowStatsContainer stats = flowMonitor->GetFlowStats();
+    }
+    NS_LOG_DEBUG("Flow monitor @ " << this->flowMonitor);
+
+    trafficGenerator->ReceiveLoopbackInformation(0.0, 0, this->windowInSeconds, Time(0), Time(0));
+    Simulator::Schedule(Seconds(this->windowInSeconds), &LoopbackUpdater::updateLoopback, this); 
 }
 
 } // Namespace ns3

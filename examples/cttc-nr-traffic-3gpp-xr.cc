@@ -18,6 +18,7 @@
 #include "ns3/packet-sink.h"
 #include "ns3/point-to-point-module.h"
 #include "ns3/xr-traffic-mixer-helper.h"
+#include "ns3/object-factory.h"
 
 #include <vector>
 
@@ -36,7 +37,6 @@
  */
 
 using namespace ns3;
-
 NS_LOG_COMPONENT_DEFINE("CttcNrTraffic3gppXr");
 
 void
@@ -81,7 +81,9 @@ ConfigureXrApp(NodeContainer& ueContainer,
                std::vector<Ptr<EpcTft>>& tfts,
                ApplicationContainer& serverApps,
                ApplicationContainer& clientApps,
-               ApplicationContainer& pingApps)
+               ApplicationContainer& pingApps,
+               ApplicationContainer& updaterApps,
+               TrafficGenerator3gppGenericVideo::LoopbackAlgType loopbackAlgType=TrafficGenerator3gppGenericVideo::LoopbackAlgType::ADJUST_IPA_TIME)
 {
     XrTrafficMixerHelper trafficMixerHelper;
     Ipv4Address ipAddress = ueIpIface.GetAddress(i, 0);
@@ -98,8 +100,41 @@ ConfigureXrApp(NodeContainer& ueContainer,
     }
 
     ApplicationContainer currentUeClientApps;
-    currentUeClientApps.Add(
-        trafficMixerHelper.Install(transportProtocol, addresses, remoteHostContainer.Get(0)));
+    ApplicationContainer trafficGeneratorApps = trafficMixerHelper.Install(transportProtocol, addresses, remoteHostContainer.Get(0));
+
+    std::cout << "TrafficGeneratorApps size: " << trafficGeneratorApps.GetN() << std::endl;
+    for (uint j = 0; j < trafficGeneratorApps.GetN(); j++) {
+        std::cout << "App name: " << trafficGeneratorApps.Get(j)->GetTypeId() << std::endl;
+        std::cout << "Target ID: " << TrafficGenerator3gppGenericVideo::GetTypeId() << std::endl;
+        Ptr<TrafficGenerator3gppGenericVideo> videoApp = DynamicCast<TrafficGenerator3gppGenericVideo>(trafficGeneratorApps.Get(j));
+
+        if (videoApp) {
+            videoApp->SetLoopbackAlgType(loopbackAlgType);
+
+            ObjectFactory factory;
+            factory.SetTypeId(LoopbackUpdater::GetTypeId());
+            Ptr<LoopbackUpdater> updater = factory.Create<LoopbackUpdater>();
+
+            FlowMonitorHelper flowmonHelper;
+            NodeContainer endpointNodes;
+            endpointNodes.Add(remoteHostContainer.Get(0));
+            endpointNodes.Add(ueContainer.Get(i));
+
+            Ptr<ns3::FlowMonitor> monitor = flowmonHelper.Install(endpointNodes);
+            monitor->SetAttribute("DelayBinWidth", DoubleValue(0.0001));
+            monitor->SetAttribute("JitterBinWidth", DoubleValue(0.001));
+            monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(20));
+
+            updater->setTrafficGenerator(videoApp);
+            updater->setWindowInSeconds(1.0);
+            updater->setFlowMonitor(monitor);
+
+            remoteHostContainer.Get(0)->AddApplication(updater);
+            updaterApps.Add(updater);
+        }
+    }
+
+    currentUeClientApps.Add(trafficGeneratorApps);
 
     // Seed the ARP cache by pinging early in the simulation
     // This is a workaround until a static ARP capability is provided
@@ -132,23 +167,28 @@ ConfigureXrApp(NodeContainer& ueContainer,
     clientApps.Add(currentUeClientApps);
 }
 
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+
+using namespace ns3;
+
 int
 main(int argc, char* argv[])
 {
     // set simulation time and mobility
-    uint32_t appDuration = 10000;
-    uint32_t appStartTimeMs = 400;
-    uint16_t numerology = 0;
-    uint16_t arUeNum = 1;
-    uint16_t vrUeNum = 1;
-    uint16_t cgUeNum = 1;
+    uint32_t appDuration = 50000; // 10000;
+    uint32_t appStartTimeMs = 500; // 400;
+    uint16_t numerology = 1; // 0; // FDM
+    uint16_t arUeNum = 2; // 1;
+    uint16_t vrUeNum = 2; // 1;
+    uint16_t cgUeNum = 2; // 1;
     double centralFrequency = 4e9;
-    double bandwidth = 10e6;
-    double txPower = 41;
+    double bandwidth = 80e6; // 10e6;
+    double txPower = 52; // 41; // GNB power
     bool isMx1 = true;
     bool useUdp = true;
-    double distance = 450;
-    uint32_t rngRun = 1;
+    double distance = 500; // 450;
+    uint32_t rngRun = 100; // 1;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("arUeNum", "The number of AR UEs", arUeNum);
@@ -187,6 +227,8 @@ main(int argc, char* argv[])
     // setup the nr simulation
     Ptr<NrHelper> nrHelper = CreateObject<NrHelper>();
     // simple band configuration and initialize
+    // original band config
+    /*
     CcBwpCreator ccBwpCreator;
     CcBwpCreator::SimpleOperationBandConf bandConf(centralFrequency,
                                                    bandwidth,
@@ -196,17 +238,23 @@ main(int argc, char* argv[])
     OperationBandInfo band = ccBwpCreator.CreateOperationBandContiguousCc(bandConf);
     nrHelper->InitializeOperationBand(&band);
     BandwidthPartInfoPtrVector allBwps = CcBwpCreator::GetAllBwps({band});
+    */
 
+    // TODO: Setup the config (NR)
     nrHelper->SetGnbPhyAttribute("TxPower", DoubleValue(txPower));
     nrHelper->SetGnbPhyAttribute("Numerology", UintegerValue(numerology));
     nrHelper->SetGnbPhyAttribute("NoiseFigure", DoubleValue(5));
-    nrHelper->SetUePhyAttribute("TxPower", DoubleValue(23));
+
+    nrHelper->SetUePhyAttribute("TxPower", DoubleValue(26)); // set UE TX power
+    // nrHelper->SetUePhyAttribute("TxPower", DoubleValue(23));
+    
     nrHelper->SetUePhyAttribute("NoiseFigure", DoubleValue(7));
 
     Config::SetDefault("ns3::LteRlcUm::MaxTxBufferSize", UintegerValue(999999999));
     Config::SetDefault("ns3::LteEnbRrc::EpsBearerToRlcMapping",
                        EnumValue(useUdp ? LteEnbRrc::RLC_UM_ALWAYS : LteEnbRrc::RLC_AM_ALWAYS));
 
+    // TODO: Setup the config (NR)
     nrHelper->SetGnbAntennaAttribute("NumRows", UintegerValue(4));
     nrHelper->SetGnbAntennaAttribute("NumColumns", UintegerValue(8));
     nrHelper->SetGnbAntennaAttribute("AntennaElement",
@@ -229,12 +277,79 @@ main(int argc, char* argv[])
     nrHelper->SetEpcHelper(epcHelper);
     epcHelper->SetAttribute("S1uLinkDelay", TimeValue(MilliSeconds(0)));
 
+    // my additional setting
+	
+    std::stringstream schedulerType;
+    std::string subType;
+    std::string sched;
+
+    subType = "Tdma";
+    sched = "Qos";
+    schedulerType << "ns3::NrMacScheduler" << subType << sched;
+    std::cout << "SchedulerType: " << schedulerType.str() << std::endl;
+    nrHelper->SetSchedulerTypeId(TypeId::LookupByName(schedulerType.str()));
+
+    uint32_t mcs = 28;
+    // nrHelper->SetSchedulerAttribute("FixedMcsDl", BooleanValue(true));
+    // nrHelper->SetSchedulerAttribute("FixedMcsUl", BooleanValue(true));
+    nrHelper->SetSchedulerAttribute("FixedMcsDl", BooleanValue(false));
+    nrHelper->SetSchedulerAttribute("FixedMcsUl", BooleanValue(false));
+    nrHelper->SetSchedulerAttribute("StartingMcsDl", UintegerValue(mcs));
+    nrHelper->SetSchedulerAttribute("StartingMcsUl", UintegerValue(mcs));
+
+    std::string errorModel = "ns3::NrEesmIrT1";
+    Config::SetDefault("ns3::NrAmc::ErrorModelType", TypeIdValue(TypeId::LookupByName(errorModel)));
+    Config::SetDefault("ns3::NrAmc::AmcModel",
+                       EnumValue(NrAmc::ErrorModel));
+
+    // "Error model type: ns3::NrEesmCcT1, ns3::NrEesmCcT2, ns3::NrEesmIrT1, "
+    // "ns3::NrEesmIrT2, ns3::NrLteMiErrorModel"
+    
+    nrHelper->SetGnbDlAmcAttribute(
+        "AmcModel",
+        EnumValue(NrAmc::ErrorModel)); // NrAmc::ShannonModel or NrAmc::ErrorModel
+    nrHelper->SetGnbUlAmcAttribute(
+        "AmcModel",
+        EnumValue(NrAmc::ErrorModel)); // NrAmc::ShannonModel or NrAmc::ErrorModel
+    nrHelper->SetUlErrorModel(errorModel);
+    nrHelper->SetDlErrorModel(errorModel);
+
+    std::unique_ptr<ComponentCarrierInfo> cc0(new ComponentCarrierInfo());
+    std::unique_ptr<BandwidthPartInfo> bwp0(new BandwidthPartInfo());
+    std::unique_ptr<BandwidthPartInfo> bwp1(new BandwidthPartInfo());
+
+    std::unique_ptr<ComponentCarrierInfo> cc1(new ComponentCarrierInfo());
+    std::unique_ptr<BandwidthPartInfo> bwp2(new BandwidthPartInfo());
+
+    const uint8_t numContiguousCcs = 4; // 4 CCs per Band
+
+    // Create the configuration for the CcBwpHelper
+    BandwidthPartInfoPtrVector allBwps;
+    CcBwpCreator ccBwpCreator;
+
+    OperationBandInfo band;
+    CcBwpCreator::SimpleOperationBandConf bandConf(centralFrequency,
+					       bandwidth,
+					       numContiguousCcs,
+					       BandwidthPartInfo::UMi_StreetCanyon_LoS);
+
+    bandConf.m_numBwp = 1; // 1 BWP per CC
+
+    // By using the configuration created, it is time to make the operation band
+    band = ccBwpCreator.CreateOperationBandContiguousCc(bandConf);
+
+    nrHelper->InitializeOperationBand(&band);
+    allBwps = CcBwpCreator::GetAllBwps({band});
+
     // Initialize nrHelper
     nrHelper->Initialize();
 
+    // Init Nodes (gNB + UEs)
     NodeContainer gNbNodes;
     NodeContainer ueNodes;
     MobilityHelper mobility;
+    // TODO: Mobility model. We should set distance between gNB and UEs here
+    //      Also, we should find out the correct position allocators
     mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
 
     const double gNbHeight = 25;
@@ -414,11 +529,13 @@ main(int argc, char* argv[])
     // Install traffic generators
     ApplicationContainer clientApps;
     ApplicationContainer pingApps;
+    ApplicationContainer updaterApps;
 
     std::ostringstream xrFileTag;
 
     for (uint32_t i = 0; i < ueArContainer.GetN(); ++i)
     {
+        std::cout << "configure XR app for AR" << std::endl;
         ConfigureXrApp(ueArContainer,
                        i,
                        ueArIpIface,
@@ -434,12 +551,15 @@ main(int argc, char* argv[])
                        arTfts,
                        serverApps,
                        clientApps,
-                       pingApps);
+                       pingApps,
+                       updaterApps
+                       );
     }
     // TODO for VR and CG of 2 flows Tfts and isMx1 have to be set. Currently they are
     // hardcoded for 1 flow
     for (uint32_t i = 0; i < ueVrContainer.GetN(); ++i)
     {
+        std::cout << "configure XR app for VR" << std::endl;
         ConfigureXrApp(ueVrContainer,
                        i,
                        ueVrIpIface,
@@ -455,10 +575,13 @@ main(int argc, char* argv[])
                        arTfts,
                        serverApps,
                        clientApps,
-                       pingApps);
+                       pingApps,
+                       updaterApps
+                       );
     }
     for (uint32_t i = 0; i < ueCgContainer.GetN(); ++i)
     {
+        std::cout << "configure XR app for CG" << std::endl;
         ConfigureXrApp(ueCgContainer,
                        i,
                        ueCgIpIface,
@@ -474,7 +597,9 @@ main(int argc, char* argv[])
                        arTfts,
                        serverApps,
                        clientApps,
-                       pingApps);
+                       pingApps,
+                       updaterApps
+                       );
     }
 
     pingApps.Start(MilliSeconds(100));
@@ -483,23 +608,29 @@ main(int argc, char* argv[])
     // start server and client apps
     serverApps.Start(MilliSeconds(appStartTimeMs));
     clientApps.Start(MilliSeconds(appStartTimeMs));
+    updaterApps.Start(MilliSeconds(appStartTimeMs));
     serverApps.Stop(MilliSeconds(simTimeMs));
     clientApps.Stop(MilliSeconds(appStartTimeMs + appDuration));
+    updaterApps.Stop(MilliSeconds(simTimeMs));
 
     FlowMonitorHelper flowmonHelper;
     NodeContainer endpointNodes;
     endpointNodes.Add(remoteHost);
     endpointNodes.Add(ueNodes);
 
+    /*
     Ptr<ns3::FlowMonitor> monitor = flowmonHelper.Install(endpointNodes);
     monitor->SetAttribute("DelayBinWidth", DoubleValue(0.0001));
     monitor->SetAttribute("JitterBinWidth", DoubleValue(0.001));
     monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(20));
+    */
 
     Simulator::Stop(MilliSeconds(simTimeMs));
     Simulator::Run();
 
     // Print per-flow statistics
+    // monitor->CheckForLostPackets();
+    /*
     monitor->CheckForLostPackets();
     Ptr<Ipv4FlowClassifier> classifier =
         DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
@@ -544,10 +675,12 @@ main(int argc, char* argv[])
             double throughput = ((i->second.rxBytes * 8.0) / rxDuration.GetSeconds()) * 1e-6;
             double delay = 1000 * i->second.delaySum.GetSeconds() / i->second.rxPackets;
             double jitter = 1000 * i->second.jitterSum.GetSeconds() / i->second.rxPackets;
+            double packetLoss = 100 * (i->second.txPackets - i->second.rxPackets) / i->second.txPackets;
 
             std::cout << "  Throughput: " << throughput << " Mbps\n";
             std::cout << "  Mean delay:  " << delay << " ms\n";
             std::cout << "  Mean jitter:  " << jitter << " ms\n";
+            std::cout << "  Packet Loss:  " << packetLoss << " %\n";
         }
         else
         {
@@ -562,7 +695,9 @@ main(int argc, char* argv[])
     std::cout << "\n\n  Mean flow throughput: " << averageFlowThroughput / stats.size()
               << "Mbps \n";
     std::cout << "  Mean flow delay: " << averageFlowDelay / stats.size() << " ms\n";
+    */
 
     Simulator::Destroy();
+
     return 0;
 }
