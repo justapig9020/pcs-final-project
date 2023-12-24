@@ -137,13 +137,17 @@ class LoopbackUpdater : public Application
         ~LoopbackUpdater() override;
         void setWindowInSeconds(double windowInSeconds);
         void setTrafficGenerator(Ptr<TrafficGenerator3gppGenericVideo> trafficGenerator);
-        void setFlowMonitor(Ptr<FlowMonitor> flowMonitor);
+        void setMonitor(Ptr<ns3::FlowMonitor> monitor);
+        void setClassifier(Ptr<Ipv4FlowClassifier> classifier);
+        void setDestIP(Ipv4Address destIP);
     protected:
         void DoInitialize() override;
     private:
         double windowInSeconds;
         Ptr<TrafficGenerator3gppGenericVideo> trafficGenerator;
         Ptr<FlowMonitor> flowMonitor;
+        Ptr<Ipv4FlowClassifier> classifier;
+        Ipv4Address destIP;
         void updateLoopback();
 };
 

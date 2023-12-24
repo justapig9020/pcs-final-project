@@ -319,7 +319,7 @@ TrafficGenerator3gppGenericVideo::ReceiveLoopbackInformation(double packetLoss,
                                 << " window in seconds: " << windowInSeconds
                                 << " packet delay: " << packetDelay
                                 << " packet delay jitter: " << packetDelayJitter);
-    return;
+
     if (!m_stopEvent.IsRunning())
     {
         NS_LOG_WARN("The application stopped working ignore this function call...");
@@ -468,9 +468,9 @@ TrafficGenerator3gppGenericVideo::ReceiveLoopbackInformation(double packetLoss,
     if (tempDataRate != m_dataRate || tempFps != m_fps || tempMeanPacketSize != m_meanPacketSize)
     {
         // m_paramsTrace (Simulator::Now (), GetTgId (), m_dataRate, m_fps, m_meanPacketSize);
-        NS_LOG_DEBUG("Old data rate: " << tempDataRate << " new data rate: " << m_dataRate);
-        NS_LOG_DEBUG("Old fps:       " << tempFps << " new fps:       " << m_fps);
-        NS_LOG_DEBUG("Old mean packet size:       "
+        NS_LOG_INFO("Old data rate: " << tempDataRate << " new data rate: " << m_dataRate);
+        NS_LOG_INFO("Old fps:       " << tempFps << " new fps:       " << m_fps);
+        NS_LOG_INFO("Old mean packet size:       "
                      << tempMeanPacketSize << " new mean packet size:       " << m_meanPacketSize);
     }
 }
@@ -498,11 +498,22 @@ void LoopbackUpdater::setTrafficGenerator(Ptr<TrafficGenerator3gppGenericVideo> 
     this->trafficGenerator = trafficGenerator;
 }
 
-void LoopbackUpdater::setFlowMonitor(Ptr<FlowMonitor> flowMonitor)
+void LoopbackUpdater::setMonitor(Ptr<ns3::FlowMonitor> monitor)
 {
-    NS_LOG_FUNCTION(this << flowMonitor);
-    this->flowMonitor = flowMonitor;
-    NS_LOG_DEBUG("Flow monitor set " << this->flowMonitor);
+    NS_LOG_FUNCTION(this << monitor);
+    this->flowMonitor = monitor;
+}
+
+void LoopbackUpdater::setClassifier(Ptr<Ipv4FlowClassifier> classifier)
+{
+    NS_LOG_FUNCTION(this << classifier);
+    this->classifier = classifier;
+}
+
+void LoopbackUpdater::setDestIP(Ipv4Address destIP)
+{
+    NS_LOG_FUNCTION(this << destIP);
+    this->destIP = destIP;
 }
 
 LoopbackUpdater::LoopbackUpdater() : Application()
@@ -528,14 +539,45 @@ void LoopbackUpdater::DoInitialize()
 
 void LoopbackUpdater::updateLoopback()
 {
+    static int pre_rx = 0;
+    static int pre_delay = 0;
+    static int pre_jitter = 0;
+    
     NS_LOG_FUNCTION(this);
-    if (flowMonitor) {
-        flowMonitor->CheckForLostPackets();
-        FlowMonitor::FlowStatsContainer stats = flowMonitor->GetFlowStats();
-    }
-    NS_LOG_DEBUG("Flow monitor @ " << this->flowMonitor);
+    NS_LOG_INFO("Flow monitor @ " << this->flowMonitor);
 
-    trafficGenerator->ReceiveLoopbackInformation(0.0, 0, this->windowInSeconds, Time(0), Time(0));
+    flowMonitor->CheckForLostPackets();
+    FlowMonitor::FlowStatsContainer stats = flowMonitor->GetFlowStats();
+    // flowMonitor->StopRightNow();
+    // flowMonitor->StartRightNow();
+    for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin();
+         i != stats.end();
+         ++i)
+    {
+        Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow(i->first);
+        if (t.destinationAddress != this->destIP)
+            continue;
+        std::cout << "Flow " << i->first << " (" << t.sourceAddress << ":" << t.sourcePort << " -> "
+                  << t.destinationAddress << ":" << t.destinationPort << ") proto " << std::endl;
+    	double delay = 1e6 * (i->second.delaySum.GetSeconds() - pre_delay)  / (i->second.rxPackets - pre_rx);
+    	double jitter = 1e6 * (i->second.jitterSum.GetSeconds() - pre_jitter) / (i->second.rxPackets - pre_rx);
+    	trafficGenerator->ReceiveLoopbackInformation(0.0, i->second.rxPackets - pre_rx, this->windowInSeconds, Time(delay), Time(jitter));
+
+        pre_rx = i->second.rxPackets;
+        pre_delay = i->second.delaySum.GetSeconds();
+        pre_jitter = i->second.jitterSum.GetSeconds();
+
+	/*
+	double txPacketLossEstimation =
+		std::max(0.0, std::min(1.0, 1 - ((double)i->second.rxPackets / (60 * this->windowInSeconds))));
+	NS_LOG_INFO("ALL packet delay: " << i->second.delaySum.GetSeconds() / i->second.rxPackets
+		<< ", packet delay jitter: " << i->second.jitterSum.GetSeconds() / i->second.rxPackets
+		<< ", packet loss estimation:" << txPacketLossEstimation);
+	*/
+	//break;
+
+    }
+
     Simulator::Schedule(Seconds(this->windowInSeconds), &LoopbackUpdater::updateLoopback, this); 
 }
 

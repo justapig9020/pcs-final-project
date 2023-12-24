@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Centre Tecnologic de Telecomunicacions de Catalunya (CTTC)
+
 //
 // SPDX-License-Identifier: GPL-2.0-only
 
@@ -83,6 +83,8 @@ ConfigureXrApp(NodeContainer& ueContainer,
                ApplicationContainer& clientApps,
                ApplicationContainer& pingApps,
                ApplicationContainer& updaterApps,
+	       Ptr<ns3::FlowMonitor> monitor,
+                Ptr<Ipv4FlowClassifier> classifier,
                TrafficGenerator3gppGenericVideo::LoopbackAlgType loopbackAlgType=TrafficGenerator3gppGenericVideo::LoopbackAlgType::ADJUST_IPA_TIME)
 {
     XrTrafficMixerHelper trafficMixerHelper;
@@ -104,8 +106,8 @@ ConfigureXrApp(NodeContainer& ueContainer,
 
     std::cout << "TrafficGeneratorApps size: " << trafficGeneratorApps.GetN() << std::endl;
     for (uint j = 0; j < trafficGeneratorApps.GetN(); j++) {
-        std::cout << "App name: " << trafficGeneratorApps.Get(j)->GetTypeId() << std::endl;
-        std::cout << "Target ID: " << TrafficGenerator3gppGenericVideo::GetTypeId() << std::endl;
+        // std::cout << "App name: " << trafficGeneratorApps.Get(j)->GetTypeId() << std::endl;
+        // std::cout << "Target ID: " << TrafficGenerator3gppGenericVideo::GetTypeId() << std::endl;
         Ptr<TrafficGenerator3gppGenericVideo> videoApp = DynamicCast<TrafficGenerator3gppGenericVideo>(trafficGeneratorApps.Get(j));
 
         if (videoApp) {
@@ -115,19 +117,11 @@ ConfigureXrApp(NodeContainer& ueContainer,
             factory.SetTypeId(LoopbackUpdater::GetTypeId());
             Ptr<LoopbackUpdater> updater = factory.Create<LoopbackUpdater>();
 
-            FlowMonitorHelper flowmonHelper;
-            NodeContainer endpointNodes;
-            endpointNodes.Add(remoteHostContainer.Get(0));
-            endpointNodes.Add(ueContainer.Get(i));
-
-            Ptr<ns3::FlowMonitor> monitor = flowmonHelper.Install(endpointNodes);
-            monitor->SetAttribute("DelayBinWidth", DoubleValue(0.0001));
-            monitor->SetAttribute("JitterBinWidth", DoubleValue(0.001));
-            monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(20));
-
             updater->setTrafficGenerator(videoApp);
-            updater->setWindowInSeconds(1.0);
-            updater->setFlowMonitor(monitor);
+            updater->setMonitor(monitor);
+            updater->setWindowInSeconds(0.5);
+            updater->setClassifier(classifier);
+            updater->setDestIP(ipAddress);
 
             remoteHostContainer.Get(0)->AddApplication(updater);
             updaterApps.Add(updater);
@@ -225,6 +219,7 @@ main(int argc, char* argv[])
     SeedManager::SetRun(rngRun);
 
     // setup the nr simulation
+
     Ptr<NrHelper> nrHelper = CreateObject<NrHelper>();
     // simple band configuration and initialize
     // original band config
@@ -241,6 +236,8 @@ main(int argc, char* argv[])
     */
 
     // TODO: Setup the config (NR)
+    std::cout << "Setup NR config" << std::endl;
+
     nrHelper->SetGnbPhyAttribute("TxPower", DoubleValue(txPower));
     nrHelper->SetGnbPhyAttribute("Numerology", UintegerValue(numerology));
     nrHelper->SetGnbPhyAttribute("NoiseFigure", DoubleValue(5));
@@ -268,6 +265,8 @@ main(int argc, char* argv[])
                                     PointerValue(CreateObject<IsotropicAntennaModel>()));
 
     // Beamforming method
+    std::cout << "Setup Beamforming config" << std::endl;
+
     Ptr<IdealBeamformingHelper> idealBeamformingHelper = CreateObject<IdealBeamformingHelper>();
     idealBeamformingHelper->SetAttribute("BeamformingMethod",
                                          TypeIdValue(DirectPathBeamforming::GetTypeId()));
@@ -278,6 +277,7 @@ main(int argc, char* argv[])
     epcHelper->SetAttribute("S1uLinkDelay", TimeValue(MilliSeconds(0)));
 
     // my additional setting
+    std::cout << "Setup Sechedule config" << std::endl;
 	
     std::stringstream schedulerType;
     std::string subType;
@@ -288,6 +288,8 @@ main(int argc, char* argv[])
     schedulerType << "ns3::NrMacScheduler" << subType << sched;
     std::cout << "SchedulerType: " << schedulerType.str() << std::endl;
     nrHelper->SetSchedulerTypeId(TypeId::LookupByName(schedulerType.str()));
+
+    std::cout << "Setup Error Model config" << std::endl;
 
     uint32_t mcs = 28;
     // nrHelper->SetSchedulerAttribute("FixedMcsDl", BooleanValue(true));
@@ -324,6 +326,8 @@ main(int argc, char* argv[])
     const uint8_t numContiguousCcs = 4; // 4 CCs per Band
 
     // Create the configuration for the CcBwpHelper
+    std::cout << "Setup CcBwpHelper config" << std::endl;
+
     BandwidthPartInfoPtrVector allBwps;
     CcBwpCreator ccBwpCreator;
 
@@ -355,6 +359,8 @@ main(int argc, char* argv[])
     const double gNbHeight = 25;
     const double ueHeight = 1.5;
 
+    std::cout << "Create Nodes config" << std::endl;
+
     gNbNodes.Create(1);
     ueNodes.Create(arUeNum + vrUeNum + cgUeNum);
 
@@ -365,7 +371,7 @@ main(int argc, char* argv[])
 
     Ptr<RandomDiscPositionAllocator> ueDiscPositionAlloc =
         CreateObject<RandomDiscPositionAllocator>();
-    ueDiscPositionAlloc->SetX(0.0);
+    ueDiscPositionAlloc->SetX(distance);
     ueDiscPositionAlloc->SetY(0.0);
     ueDiscPositionAlloc->SetZ(ueHeight);
     mobility.SetPositionAllocator(ueDiscPositionAlloc);
@@ -438,7 +444,7 @@ main(int argc, char* argv[])
 
     // connect a remoteHost to pgw. Setup routing too
     PointToPointHelper p2ph;
-    p2ph.SetDeviceAttribute("DataRate", DataRateValue(DataRate("100Gb/s")));
+    p2ph.SetDeviceAttribute("DataRate", DataRateValue(DataRate("20Mb/s")));
     p2ph.SetDeviceAttribute("Mtu", UintegerValue(1000));
     p2ph.SetChannelAttribute("Delay", TimeValue(Seconds(0.000)));
     NetDeviceContainer internetDevices = p2ph.Install(pgw, remoteHost);
@@ -526,6 +532,21 @@ main(int argc, char* argv[])
     dlpfCg.localPortEnd = dlPortCgStart;
     cgTft->Add(dlpfCg);
 
+    // monitor
+    /*
+    */
+    FlowMonitorHelper flowmonHelper;
+    NodeContainer endpointNodes;
+    endpointNodes.Add(remoteHost);
+    endpointNodes.Add(ueNodes);
+
+    Ptr<ns3::FlowMonitor> monitor = flowmonHelper.Install(endpointNodes);
+    monitor->SetAttribute("DelayBinWidth", DoubleValue(0.0001));
+    monitor->SetAttribute("JitterBinWidth", DoubleValue(0.001));
+    monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(20));
+    Ptr<Ipv4FlowClassifier> classifier =
+        DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
+
     // Install traffic generators
     ApplicationContainer clientApps;
     ApplicationContainer pingApps;
@@ -535,7 +556,7 @@ main(int argc, char* argv[])
 
     for (uint32_t i = 0; i < ueArContainer.GetN(); ++i)
     {
-        std::cout << "configure XR app for AR" << std::endl;
+        std::cout << "Configure XR app for AR" << std::endl;
         ConfigureXrApp(ueArContainer,
                        i,
                        ueArIpIface,
@@ -552,14 +573,16 @@ main(int argc, char* argv[])
                        serverApps,
                        clientApps,
                        pingApps,
-                       updaterApps
+                       updaterApps,
+		       monitor,
+               classifier
                        );
     }
     // TODO for VR and CG of 2 flows Tfts and isMx1 have to be set. Currently they are
     // hardcoded for 1 flow
     for (uint32_t i = 0; i < ueVrContainer.GetN(); ++i)
     {
-        std::cout << "configure XR app for VR" << std::endl;
+        std::cout << "Configure XR app for VR" << std::endl;
         ConfigureXrApp(ueVrContainer,
                        i,
                        ueVrIpIface,
@@ -576,12 +599,14 @@ main(int argc, char* argv[])
                        serverApps,
                        clientApps,
                        pingApps,
-                       updaterApps
+                       updaterApps,
+		       monitor,
+               classifier
                        );
     }
     for (uint32_t i = 0; i < ueCgContainer.GetN(); ++i)
     {
-        std::cout << "configure XR app for CG" << std::endl;
+        std::cout << "Configure XR app for CG" << std::endl;
         ConfigureXrApp(ueCgContainer,
                        i,
                        ueCgIpIface,
@@ -598,7 +623,9 @@ main(int argc, char* argv[])
                        serverApps,
                        clientApps,
                        pingApps,
-                       updaterApps
+                       updaterApps,
+		       monitor,
+               classifier
                        );
     }
 
@@ -613,27 +640,10 @@ main(int argc, char* argv[])
     clientApps.Stop(MilliSeconds(appStartTimeMs + appDuration));
     updaterApps.Stop(MilliSeconds(simTimeMs));
 
-    FlowMonitorHelper flowmonHelper;
-    NodeContainer endpointNodes;
-    endpointNodes.Add(remoteHost);
-    endpointNodes.Add(ueNodes);
-
-    /*
-    Ptr<ns3::FlowMonitor> monitor = flowmonHelper.Install(endpointNodes);
-    monitor->SetAttribute("DelayBinWidth", DoubleValue(0.0001));
-    monitor->SetAttribute("JitterBinWidth", DoubleValue(0.001));
-    monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(20));
-    */
-
     Simulator::Stop(MilliSeconds(simTimeMs));
     Simulator::Run();
 
-    // Print per-flow statistics
-    // monitor->CheckForLostPackets();
-    /*
     monitor->CheckForLostPackets();
-    Ptr<Ipv4FlowClassifier> classifier =
-        DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
     FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
 
     double averageFlowThroughput = 0.0;
@@ -695,7 +705,6 @@ main(int argc, char* argv[])
     std::cout << "\n\n  Mean flow throughput: " << averageFlowThroughput / stats.size()
               << "Mbps \n";
     std::cout << "  Mean flow delay: " << averageFlowDelay / stats.size() << " ms\n";
-    */
 
     Simulator::Destroy();
 
